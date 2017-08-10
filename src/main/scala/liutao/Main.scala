@@ -25,7 +25,7 @@ object Main {
     val filesRdd = sc.parallelize(allFiles)
 
     //文件分割为段落的集合 List[String]
-    val fileParsed = filesRdd.map(file => (file.getAbsolutePath, HtmlParser.parse(file)))
+    val fileParsed = filesRdd.map(file => (file.getPath, HtmlParser.parse(file)))
 
     //将文件转换为段落
     val beforeWordSplit = fileParsed.flatMap(el => {

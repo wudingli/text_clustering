@@ -123,7 +123,7 @@ object Main {
 //    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0), row.getDouble(1), row.getList[Int](2), row.getList[Int](2).toArray.map(el => docTopics.filter(row2 => row2 != null && row != null && row2.getList[Int](1).contains(el) && !row2.getString(0).equals(row.getString(0))))))
     val searchResultWithSuggestDf = spark.createDataFrame(searchResultWithSuggest).toDF("label", "hit", "topics", "relevant")
     val searchResultWithSuggestSorted = searchResultWithSuggestDf.sort(searchResultWithSuggestDf("hit").desc, searchResultWithSuggestDf("label"))
-
+    ldaModel.save(Const.outputPath + "/lda-model")
     docTopics.repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/document-topic")
     searchResultWithSuggestSorted.repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
     spark.stop()

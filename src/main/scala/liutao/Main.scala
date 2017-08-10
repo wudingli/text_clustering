@@ -66,11 +66,11 @@ object Main {
                              .setMaxIter(Const.ldaMaxIter)
                              .setOptimizer(Const.ldaOptimizer)
                              .fit(afterCalculateTFIDF)
-    //    ldaModel.save("./LDAModel")
+    ldaModel.save(Const.outputPath + "/lda-model")
     //获得topic-word分布
     val topic = ldaModel.describeTopics()
-    topic.cache()
-    topic.show(false)
+//    topic.cache()
+//    topic.show(false)
 
     //将topic-word分布中的word id的集合转换成word集合
     val flatTopic = topic.rdd.flatMap(row => row.getList[Int](1).toArray.map(el => (el.asInstanceOf[Int], row.getInt(0))))
@@ -79,7 +79,7 @@ object Main {
                              .reduceByKey((a, b) => a ++ b)
                              .sortByKey()
 //    val saveOptions = Map("header" -> "true", "path" -> (Const.outputPath + "/topic-word"))
-    spark.createDataFrame(flatTopic).toDF("topic","words").repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/topic-word")
+    spark.createDataFrame(flatTopic).toDF("topic","words").write.mode(SaveMode.Overwrite).json(Const.outputPath + "/topic-word")
 //    flatTopic.repartition(1).saveAsTextFile(Const.outputPath + "/topic-word")
     //    println(ldaModel.logLikelihood(afterCalculateTFIDF))
     //    println(ldaModel.logPerplexity(afterCalculateTFIDF))
@@ -93,16 +93,22 @@ object Main {
     //显示过滤后的结果
     val docTopics = spark.createDataFrame(clusterResult).toDF("label", "topics")
     docTopics.cache()
-
+    afterCalculateTFIDF.unpersist()
+    docTopics.write.mode(SaveMode.Overwrite).json(Const.outputPath + "/document-topic")
 //    docTopics.rdd.repartition(1).saveAsTextFile(Const.outputPath + "/document-topic")
 
-    println("请输入关键字：")
-    val keywords = StdIn.readLine().split(" ")
-                                   .flatMap(el => WordAnalyzer.analyze(el))
-                                   .filter(_.nonEmpty)
-                                   .map(x => (x, 1.0))
+//    println("请输入关键字：")
+//    val keywords = sc.parallelize(StdIn.readLine().split(" "))
+//                                   .flatMap(el => WordAnalyzer.analyze(el))
+//                                   .filter(_.nonEmpty)
+//                                   .map(x => (x, 1.0))
+    val keywords = sc.textFile(Const.keywordPath)
+                     .flatMap(line =>line.split(" "))
+                     .flatMap(el => WordAnalyzer.analyze(el))
+                     .filter(_.nonEmpty)
+                     .map(x => (x, 1.0))
     //获取输入关键字的id
-    val keywordCode = sc.parallelize(keywords).join(allWords).map(el => el._2.swap)
+    val keywordCode = keywords.join(allWords).map(el => el._2.swap)
 
     //搜索关键字得到结果，按TF-IDF值降序排列
     //label sum(hit)
@@ -123,9 +129,9 @@ object Main {
 //    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0), row.getDouble(1), row.getList[Int](2), row.getList[Int](2).toArray.map(el => docTopics.filter(row2 => row2 != null && row != null && row2.getList[Int](1).contains(el) && !row2.getString(0).equals(row.getString(0))))))
     val searchResultWithSuggestDf = spark.createDataFrame(searchResultWithSuggest).toDF("label", "hit", "topics", "relevant")
     val searchResultWithSuggestSorted = searchResultWithSuggestDf.sort(searchResultWithSuggestDf("hit").desc, searchResultWithSuggestDf("label"))
-    ldaModel.save(Const.outputPath + "/lda-model")
-    docTopics.repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/document-topic")
-    searchResultWithSuggestSorted.repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
+
+    searchResultWithSuggestSorted.write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
+    docTopics.unpersist()
     spark.stop()
   }
 }

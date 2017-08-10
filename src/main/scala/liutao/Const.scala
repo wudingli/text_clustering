@@ -15,4 +15,5 @@ object Const {
   val ldaOptimizer = "em" //LDA Optimizer
   val ldaTopicNum = 10 //LDA Topic number
   val topicThreshold = 0.1 //Document belong topic when topic distribution over topicThreshold
+  val keywordPath = "../keyword"
 }

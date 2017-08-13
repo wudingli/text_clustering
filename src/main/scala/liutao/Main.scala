@@ -3,7 +3,7 @@ package liutao
 import java.io.File
 
 import org.apache.spark.SparkConf
-import org.apache.spark.ml.clustering.LDA
+import org.apache.spark.ml.clustering.{DistributedLDAModel, LDA}
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
@@ -58,6 +58,7 @@ object Main {
       val beforeCalculateTFIDF = spark.createDataFrame(flatData).toDF("label", "wordsCount", "word", "count")
       afterCalculateTFIDF = WordFrequence.calculateTFIDF(beforeCalculateTFIDF, allWords)
     }
+    allWords.cache()
     afterCalculateTFIDF.cache()
 //    afterCalculateTFIDF.show(false)
 
@@ -66,7 +67,8 @@ object Main {
                              .setMaxIter(Const.ldaMaxIter)
                              .setOptimizer(Const.ldaOptimizer)
                              .fit(afterCalculateTFIDF)
-    ldaModel.save(Const.outputPath + "/lda-model")
+    ldaModel.write.overwrite().save(Const.outputPath + "/lda-model")
+//    val ldaModel = DistributedLDAModel.load(Const.outputPath + "/lda-model")
     //获得topic-word分布
     val topic = ldaModel.describeTopics()
 //    topic.cache()
@@ -86,14 +88,13 @@ object Main {
 
     //获得document-topic分布
     val transformed = ldaModel.transform(afterCalculateTFIDF)
+//    transformed.show(false)
 
     //过滤掉分布值小于Const.topicThreshold的topic
     val clusterResult = transformed.rdd.map(row => (row.getString(0), row.getAs[Vector](3).toArray.zipWithIndex.filter(el => el._1 > Const.topicThreshold).sortBy(_._1).reverse.map(_._2)))
 
     //显示过滤后的结果
-    val docTopics = spark.createDataFrame(clusterResult).toDF("label", "topics")
-    docTopics.cache()
-    afterCalculateTFIDF.unpersist()
+    val docTopics = spark.createDataFrame(clusterResult).toDF("label", "topics").cache()
     docTopics.write.mode(SaveMode.Overwrite).json(Const.outputPath + "/document-topic")
 //    docTopics.rdd.repartition(1).saveAsTextFile(Const.outputPath + "/document-topic")
 
@@ -113,25 +114,27 @@ object Main {
     //搜索关键字得到结果，按TF-IDF值降序排列
     //label sum(hit)
     val searchResult = SearchHelper.getResult(afterCalculateTFIDF, spark.createDataFrame(keywordCode).toDF("keywordNo", "hit"))
+    searchResult.join(docTopics,"label").write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
 //    searchResult.show(false)
-
-    //得到与搜索结果主题相关的其他
-    val a = searchResult.join(docTopics,"label")  //label sum(hit) topics
-                        .withColumnRenamed("label", "hitLabel")
-                        .withColumnRenamed("topics","hitTopics")  //hitLabel sum(hit) hitTopics
-                        .crossJoin(docTopics) //hitLabel sum(hit) hitTopics label topics
-                        .filter(row => (row.getList[Int](2).asScala.toSet & row.getList[Int](4).asScala.toSet).nonEmpty && (!row.getString(0).equals(row.getString(3))))
-//    a.show(false)
-    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0),(row.getDouble(1), row.getList[Int](2).asScala, Array(row.getString(3)))))
-                                       .reduceByKey((a,b) => (a._1, a._2, a._3 ++  b._3))
-                                       .map(el => (el._1, el._2._1, el._2._2, el._2._3))
-
-//    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0), row.getDouble(1), row.getList[Int](2), row.getList[Int](2).toArray.map(el => docTopics.filter(row2 => row2 != null && row != null && row2.getList[Int](1).contains(el) && !row2.getString(0).equals(row.getString(0))))))
-    val searchResultWithSuggestDf = spark.createDataFrame(searchResultWithSuggest).toDF("label", "hit", "topics", "relevant")
-    val searchResultWithSuggestSorted = searchResultWithSuggestDf.sort(searchResultWithSuggestDf("hit").desc, searchResultWithSuggestDf("label"))
-
-    searchResultWithSuggestSorted.write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
-    docTopics.unpersist()
+//    //得到与搜索结果主题相关的其他
+//    val a = searchResult.join(docTopics,"label")  //label sum(hit) topics
+//                        .withColumnRenamed("label", "hitLabel")
+//                        .withColumnRenamed("topics","hitTopics")  //hitLabel sum(hit) hitTopics
+//                        .crossJoin(docTopics) //hitLabel sum(hit) hitTopics label topics
+//                        .filter(row => (row.getList[Int](2).asScala.toSet & row.getList[Int](4).asScala.toSet).nonEmpty && (!row.getString(0).equals(row.getString(3))))
+////    a.show(false)
+//    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0),(row.getDouble(1), row.getList[Int](2).asScala, Array(row.getString(3)))))
+//                                       .reduceByKey((a,b) => (a._1, a._2, a._3 ++  b._3))
+//                                       .map(el => (el._1, el._2._1, el._2._2, el._2._3))
+//
+////    val searchResultWithSuggest = a.rdd.map(row => (row.getString(0), row.getDouble(1), row.getList[Int](2), row.getList[Int](2).toArray.map(el => docTopics.filter(row2 => row2 != null && row != null && row2.getList[Int](1).contains(el) && !row2.getString(0).equals(row.getString(0))))))
+//    val searchResultWithSuggestDf = spark.createDataFrame(searchResultWithSuggest).toDF("label", "hit", "topics", "relevant")
+//    val searchResultWithSuggestSorted = searchResultWithSuggestDf.sort(searchResultWithSuggestDf("hit").desc, searchResultWithSuggestDf("label"))
+//
+//    searchResultWithSuggestSorted.write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
+//    allWords.unpersist()
+//    afterCalculateTFIDF.unpersist()
+//    docTopics.unpersist()
     spark.stop()
   }
 }

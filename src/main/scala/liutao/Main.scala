@@ -9,6 +9,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.io.StdIn
 
 object Main {
@@ -63,25 +64,25 @@ object Main {
 //    afterCalculateTFIDF.show(false)
 
     //训练LDA Model
-    val ldaModel = new LDA().setK(Const.ldaTopicNum)
-                             .setMaxIter(Const.ldaMaxIter)
-                             .setOptimizer(Const.ldaOptimizer)
-                             .fit(afterCalculateTFIDF)
-    ldaModel.write.overwrite().save(Const.outputPath + "/lda-model")
-//    val ldaModel = DistributedLDAModel.load(Const.outputPath + "/lda-model")
+//    val ldaModel = new LDA().setK(Const.ldaTopicNum)
+//                             .setMaxIter(Const.ldaMaxIter)
+//                             .setOptimizer(Const.ldaOptimizer)
+//                             .fit(afterCalculateTFIDF)
+//    ldaModel.write.overwrite().save(Const.outputPath + "/lda-model")
+    val ldaModel = DistributedLDAModel.load(Const.outputPath + "/lda-model")
     //获得topic-word分布
     val topic = ldaModel.describeTopics()
 //    topic.cache()
 //    topic.show(false)
 
     //将topic-word分布中的word id的集合转换成word集合
-    val flatTopic = topic.rdd.flatMap(row => row.getList[Int](1).toArray.map(el => (el.asInstanceOf[Int], row.getInt(0))))
-                             .join(allWords.map(_.swap))
-                             .map(el => (el._2._1, List((el._2._2, el._1))))
-                             .reduceByKey((a, b) => a ++ b)
-                             .sortByKey()
-//    val saveOptions = Map("header" -> "true", "path" -> (Const.outputPath + "/topic-word"))
-    spark.createDataFrame(flatTopic).toDF("topic","words").write.mode(SaveMode.Overwrite).json(Const.outputPath + "/topic-word")
+//    val flatTopic = topic.rdd.flatMap(row => row.getList[Int](1).toArray.map(el => (el.asInstanceOf[Int], row.getInt(0))))
+//                             .join(allWords.map(_.swap))
+//                             .map(el => (el._2._1, List((el._2._2, el._1))))
+//                             .reduceByKey((a, b) => a ++ b)
+//                             .sortByKey()
+////    val saveOptions = Map("header" -> "true", "path" -> (Const.outputPath + "/topic-word"))
+//    spark.createDataFrame(flatTopic).toDF("topic","words").write.mode(SaveMode.Overwrite).json(Const.outputPath + "/topic-word")
 //    flatTopic.repartition(1).saveAsTextFile(Const.outputPath + "/topic-word")
     //    println(ldaModel.logLikelihood(afterCalculateTFIDF))
     //    println(ldaModel.logPerplexity(afterCalculateTFIDF))
@@ -114,7 +115,13 @@ object Main {
     //搜索关键字得到结果，按TF-IDF值降序排列
     //label sum(hit)
     val searchResult = SearchHelper.getResult(afterCalculateTFIDF, spark.createDataFrame(keywordCode).toDF("keywordNo", "hit"))
-    searchResult.join(docTopics,"label").write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
+    import spark.implicits._
+    val tmp = spark.createDataFrame(searchResult.join(docTopics,"label").rdd.zipWithIndex().map(el => (el._2, el._1.getString(0), el._1.getDouble(1), el._1.getAs[mutable.WrappedArray[Int]](2)))).toDF("rownum", "label", "hit", "topics")
+//    tmp.show(false)
+    val tmp2 = tmp.groupBy("topics").min("rownum").withColumnRenamed("min(rownum)","rownum").withColumnRenamed("topics","topics2")
+//    tmp2.show(false)
+    val tmp3 = tmp2.join(tmp, "rownum")
+    tmp3.select("label", "hit", "topics").repartition(1).write.mode(SaveMode.Overwrite).json(Const.outputPath + "/search-result")
 //    searchResult.show(false)
 //    //得到与搜索结果主题相关的其他
 //    val a = searchResult.join(docTopics,"label")  //label sum(hit) topics
